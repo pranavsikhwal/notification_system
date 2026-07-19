@@ -1,5 +1,6 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException ,WebSocket,WebSocketDisconnect
 from sqlalchemy.orm import Session
+from connection_manager import manager
 
 from database import engine, get_db, Base
 from models import Notification
@@ -24,7 +25,7 @@ app.add_middleware(
 
 #notification sent by client is getting saved in db 
 @app.post("/notifications", response_model=NotificationOut)
-def create_notification(payload: NotificationCreate, db: Session = Depends(get_db)):
+async def create_notification(payload: NotificationCreate, db: Session = Depends(get_db)):
     new_notification = Notification(
         user_id=payload.user_id,
         message=payload.message,
@@ -33,6 +34,17 @@ def create_notification(payload: NotificationCreate, db: Session = Depends(get_d
     db.add(new_notification)
     db.commit()
     db.refresh(new_notification)
+    
+    await manager.send_notification(new_notification.user_id, {
+        "id": new_notification.id,
+        "user_id": new_notification.user_id,
+        "message": new_notification.message,
+        "type": new_notification.type,
+        "is_read": new_notification.is_read,
+        "created_at": new_notification.created_at.isoformat(),
+    })
+
+    #"Earlier, the API only saved notifications in the database, so users had to refresh the page to see new ones. I made the endpoint asynchronous and added manager.send_notification() so that after saving the notification, it is pushed instantly to users who have an active WebSocket connection, enabling real-time updates."
     return new_notification
   
 #sending a list of all the notifications of a particular user 
@@ -54,3 +66,13 @@ def mark_as_read(notification_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(notification)
     return notification
+  
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: int):
+    await manager.connect(user_id, websocket)
+    try:
+        while True:
+            # Keeps the connection alive, listening for any client-side messages
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(user_id)
