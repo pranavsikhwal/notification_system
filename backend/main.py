@@ -69,6 +69,7 @@ def mark_as_read(notification_id: int, db: Session = Depends(get_db)):
   
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: int):
+    print(f"User {user_id} is trying to connect")
     await manager.connect(user_id, websocket)
     try:
         while True:

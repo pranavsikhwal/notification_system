@@ -2,19 +2,19 @@
 
 import { useEffect, useState } from "react";
 
-// This type should mirror your backend's NotificationOut schema exactly
 interface Notification {
   id: number;
   user_id: number;
   message: string;
   type: string;
   is_read: boolean;
-  created_at: string; // dates come over JSON as strings, not Date objects
+  created_at: string;
 }
 
 export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [connected, setConnected] = useState<boolean>(false);
 
   const userId = 1;
 
@@ -29,6 +29,30 @@ export default function NotificationsPage() {
 
   useEffect(() => {
     fetchNotifications();
+
+    // Open WebSocket connection when the page loads
+    const ws = new WebSocket(`ws://127.0.0.1:8000/ws/${userId}`); //not hhtps use ws .
+
+    ws.onopen = () => {
+      setConnected(true);
+      console.log("WebSocket connected");
+    };
+
+    ws.onmessage = (event) => {
+      const newNotification: Notification = JSON.parse(event.data);
+      // Prepend new notification to the top of the list
+      setNotifications((prev) => [newNotification, ...prev]);
+    };
+
+    ws.onclose = () => {
+      setConnected(false);
+      console.log("WebSocket disconnected");
+    };
+
+    // Cleanup: close the connection when the component unmounts
+    return () => {
+      ws.close();
+    };
   }, []);
 
   async function markAsRead(id: number): Promise<void> {
@@ -38,28 +62,39 @@ export default function NotificationsPage() {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)),
     );
-  } //This function tells the backend to mark a notification as read, then updates the frontend state so the user immediately sees it as read without refreshing the page.
+  }
 
   if (loading) return <p className="p-6">Loading...</p>;
 
   return (
     <div className="max-w-lg mx-auto p-6">
-      <h1 className="text-xl font-semibold mb-4">Notifications</h1>
-      <div className="space-y-2">
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl mr-2 font-semibold">Notifications</h1>
+        <span
+          className={`text-xs px-2 py-1 rounded-full ${
+            connected
+              ? "bg-green-100 text-green-700"
+              : "bg-red-100 text-red-700"
+          }`}
+        >
+          {connected ? "Live" : "Disconnected"}
+        </span>
+      </div>
+      <div className=" space-y-2">
         {notifications.map((n) => (
           <div
             key={n.id}
             className={`p-4 rounded-lg border ${
-              n.is_read ? "bg-black" : " border-blue-600"
+              n.is_read ? "bg-white" : "bg-blue-50 border-blue-200"
             }`}
           >
-            <p className="text-sm text-white-600">{n.message}</p>
+            <p className="text-sm  ">{n.message}</p>
             <div className="flex justify-between items-center mt-2">
-              <span className="text-xs text-gray-300">{n.type}</span>
+              <span className="text-xs text-gray-700">{n.type}</span>
               {!n.is_read && (
                 <button
                   onClick={() => markAsRead(n.id)}
-                  className=" ml-2 text-xs text-blue-600 hover:underline"
+                  className="text-xs text-blue-600 hover:underline"
                 >
                   Mark as read
                 </button>
