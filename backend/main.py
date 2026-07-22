@@ -10,7 +10,19 @@ from schemas import NotificationCreate, NotificationOut
 Base.metadata.create_all(bind=engine)
 #In production we use Alembic migration tool instead of this . 
 
-app = FastAPI(title="Notification System API")
+from contextlib import asynccontextmanager #this is used to manage application lifespan 
+import asyncio
+from redis_listener import redis_listener
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: launch the Redis listener as a background task
+    task = asyncio.create_task(redis_listener())
+    yield
+    # Shutdown: cancel the listener task cleanly
+    task.cancel()
+
+app = FastAPI(title="Notification System API", lifespan=lifespan)
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -35,13 +47,13 @@ async def create_notification(payload: NotificationCreate, db: Session = Depends
     db.commit()
     db.refresh(new_notification)
     
-    await manager.send_notification(new_notification.user_id, {
-        "id": new_notification.id,
-        "user_id": new_notification.user_id,
-        "message": new_notification.message,
-        "type": new_notification.type,
-        "is_read": new_notification.is_read,
-        "created_at": new_notification.created_at.isoformat(),
+    await manager.publish_notification(new_notification.user_id, {
+    "id": new_notification.id,
+    "user_id": new_notification.user_id,
+    "message": new_notification.message,
+    "type": new_notification.type,
+    "is_read": new_notification.is_read,
+    "created_at": new_notification.created_at.isoformat(),
     })
 
     #"Earlier, the API only saved notifications in the database, so users had to refresh the page to see new ones. I made the endpoint asynchronous and added manager.send_notification() so that after saving the notification, it is pushed instantly to users who have an active WebSocket connection, enabling real-time updates."
@@ -69,7 +81,6 @@ def mark_as_read(notification_id: int, db: Session = Depends(get_db)):
   
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: int):
-    print(f"User {user_id} is trying to connect")
     await manager.connect(user_id, websocket)
     try:
         while True:
