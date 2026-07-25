@@ -1,12 +1,14 @@
 from fastapi import FastAPI, Depends, HTTPException ,WebSocket,WebSocketDisconnect
 from sqlalchemy.orm import Session
 from connection_manager import manager
-
+from dependencies import get_current_user
 from database import engine, get_db, Base
 from models import Notification
 from schemas import NotificationCreate, NotificationOut
 
-
+from fastapi import Query
+from auth_utils import decode_access_token
+from jose import JWTError
 from fastapi.security import OAuth2PasswordRequestForm
 from auth_utils import hash_password, verify_password, create_access_token
 from models import User
@@ -43,9 +45,9 @@ app.add_middleware(
 
 #notification sent by client is getting saved in db 
 @app.post("/notifications", response_model=NotificationOut)
-async def create_notification(payload: NotificationCreate, db: Session = Depends(get_db)):
+async def create_notification(payload: NotificationCreate,current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     new_notification = Notification(
-        user_id=payload.user_id,
+        user_id = current_user.id,
         message=payload.message,
         type=payload.type
     )
@@ -67,30 +69,44 @@ async def create_notification(payload: NotificationCreate, db: Session = Depends
   
 #sending a list of all the notifications of a particular user 
 @app.get("/notifications", response_model=list[NotificationOut])
-def get_notifications(user_id: int, db: Session = Depends(get_db)):
+def get_notifications(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     notifications = db.query(Notification)\
-        .filter(Notification.user_id == user_id)\
+        .filter(Notification.user_id == current_user.id)\
         .order_by(Notification.created_at.desc())\
         .all()
     return notifications
   
 #PATCH is used when you want to update only part of an existing resource. Here, we're only changing one field (is_read), not replacing the entire notification 
 @app.patch("/notifications/{notification_id}/read", response_model=NotificationOut)
-def mark_as_read(notification_id: int, db: Session = Depends(get_db)):
+def mark_as_read(
+    notification_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     notification = db.query(Notification).filter(Notification.id == notification_id).first()
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
+    if notification.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to modify this notification")
+
     notification.is_read = True
     db.commit()
     db.refresh(notification)
     return notification
   
-@app.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: int):
+#Browsers don't allow custom headers during the WebSocket handshake, so we can't send Authorization: Bearer <token> like we do with REST APIs. The common solution is to send the JWT as a query parameter (or use cookies) and verify it on the server before accepting the WebSocket connection
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
+    try:
+        payload = decode_access_token(token)
+        user_id = int(payload.get("sub"))
+    except JWTError:
+        await websocket.close(code=1008)  # 1008 = policy violation
+        return
+
     await manager.connect(user_id, websocket)
     try:
         while True:
-            # Keeps the connection alive, listening for any client-side messages
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(user_id)
