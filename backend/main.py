@@ -6,6 +6,12 @@ from database import engine, get_db, Base
 from models import Notification
 from schemas import NotificationCreate, NotificationOut
 
+
+from fastapi.security import OAuth2PasswordRequestForm
+from auth_utils import hash_password, verify_password, create_access_token
+from models import User
+from schemas import UserCreate, UserOut, Token
+
 # This line actually creates the tables in your database based on models.py
 Base.metadata.create_all(bind=engine)
 #In production we use Alembic migration tool instead of this . 
@@ -88,3 +94,29 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(user_id)
+        
+        
+        
+@app.post("/register", response_model=UserOut)
+def register(payload: UserCreate, db: Session = Depends(get_db)):
+    existing_user = db.query(User).filter(User.email == payload.email).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    new_user = User(
+        email=payload.email,
+        hashed_password=hash_password(payload.password)
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
+@app.post("/login", response_model=Token)
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
+
+    access_token = create_access_token(data={"sub": str(user.id)})
+    return {"access_token": access_token, "token_type": "bearer"}
