@@ -1,5 +1,8 @@
 "use client";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
+const WS_URL = API_URL?.replace("http", "ws");
+
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 
@@ -31,9 +34,8 @@ export default function NotificationsPage() {
     before?: number,
   ): Promise<void> {
     const url = before
-      ? `http://127.0.0.1:8000/notifications?before_id=${before}&limit=20`
-      : `http://127.0.0.1:8000/notifications?limit=20`;
-
+      ? `${API_URL}/notifications?before_id=${before}&limit=20`
+      : `${API_URL}/notifications?limit=20`;
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -69,7 +71,7 @@ export default function NotificationsPage() {
   );
 
   function connectWebSocket(token: string) {
-    const ws = new WebSocket(`ws://127.0.0.1:8000/ws?token=${token}`);
+    const ws = new WebSocket(`${WS_URL}/ws?token=${token}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -128,7 +130,7 @@ export default function NotificationsPage() {
 
   async function markAsRead(id: number): Promise<void> {
     const token = localStorage.getItem("access_token");
-    await fetch(`http://127.0.0.1:8000/notifications/${id}/read`, {
+    await fetch(`${API_URL}/notifications/${id}/read`, {
       method: "PATCH",
       headers: { Authorization: `Bearer ${token}` },
     });
