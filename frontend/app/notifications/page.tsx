@@ -19,9 +19,22 @@ export default function NotificationsPage() {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState<boolean>(false);
   const router = useRouter();
   const wsRef = useRef<WebSocket | null>(null);
+  const [cursor, setCursor] = useState<number | null>(null);
+  const [hasMore, setHasMore] = useState<boolean>(true);
+  const [loadingMore, setLoadingMore] = useState<boolean>(false);
+  const isUnmountingRef = useRef(false);
 
-  async function fetchNotifications(token: string): Promise<void> {
-    const res = await fetch("http://127.0.0.1:8000/notifications", {
+  const unreadCount = notifications.filter((n) => !n.is_read).length;
+
+  async function fetchNotifications(
+    token: string,
+    before?: number,
+  ): Promise<void> {
+    const url = before
+      ? `http://127.0.0.1:8000/notifications?before_id=${before}&limit=20`
+      : `http://127.0.0.1:8000/notifications?limit=20`;
+
+    const res = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
 
@@ -31,24 +44,37 @@ export default function NotificationsPage() {
     }
 
     const data: Notification[] = await res.json();
-    setNotifications(data);
-    setLoading(false);
-  }
 
-  useEffect(() => {
-    const token = localStorage.getItem("access_token");
-    if (!token) {
-      router.push("/login");
-      return;
+    if (before) {
+      setNotifications((prev) => [...prev, ...data]); // append for "load more"
+    } else {
+      setNotifications(data); // replace for initial load
     }
 
-    fetchNotifications(token);
+    if (data.length < 20) {
+      setHasMore(false); // fewer than a full page = no more left
+    }
 
+    if (data.length > 0) {
+      setCursor(data[data.length - 1].id); // last item's id becomes next cursor
+    }
+
+    setLoading(false);
+    setLoadingMore(false);
+  }
+
+  const reconnectAttemptsRef = useRef<number>(0); //useref survives re render
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+
+  function connectWebSocket(token: string) {
     const ws = new WebSocket(`ws://127.0.0.1:8000/ws?token=${token}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
       setConnected(true);
+      reconnectAttemptsRef.current = 0;
       console.log("WebSocket connected");
     };
 
@@ -59,11 +85,44 @@ export default function NotificationsPage() {
 
     ws.onclose = () => {
       setConnected(false);
-      console.log("WebSocket disconnected");
+
+      if (isUnmountingRef.current) {
+        console.log("WebSocket closed intentionally, not reconnecting");
+        return;
+      }
+
+      console.log("WebSocket disconnected, scheduling reconnect...");
+      const attempt = reconnectAttemptsRef.current;
+      const delay = Math.min(1000 * 2 ** attempt, 30000);
+
+      reconnectTimeoutRef.current = setTimeout(() => {
+        reconnectAttemptsRef.current += 1;
+        connectWebSocket(token);
+      }, delay);
     };
 
-    return () => {
+    ws.onerror = () => {
       ws.close();
+    };
+  }
+
+  useEffect(() => {
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      router.push("/login");
+      return;
+    }
+
+    isUnmountingRef.current = false;
+    fetchNotifications(token);
+    connectWebSocket(token);
+
+    return () => {
+      isUnmountingRef.current = true;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      wsRef.current?.close();
     };
   }, []);
 
@@ -80,9 +139,20 @@ export default function NotificationsPage() {
   }
 
   function confirmLogout() {
+    isUnmountingRef.current = true;
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+    }
     wsRef.current?.close();
     localStorage.removeItem("access_token");
     router.push("/login");
+  }
+
+  async function handleLoadMore() {
+    const token = localStorage.getItem("access_token");
+    if (!token || cursor === null) return;
+    setLoadingMore(true);
+    await fetchNotifications(token, cursor);
   }
 
   if (loading) return <p className="p-6">Loading...</p>;
@@ -90,7 +160,14 @@ export default function NotificationsPage() {
   return (
     <div className="max-w-lg mx-auto p-6">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-semibold">Notifications</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-semibold">Notifications</h1>
+          {unreadCount > 0 && (
+            <span className="bg-red-500 text-white text-xs font-medium px-2 py-0.5 rounded-full">
+              {unreadCount}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-3">
           <span
             className={`text-xs px-2 py-1 rounded-full ${
@@ -133,7 +210,15 @@ export default function NotificationsPage() {
           </div>
         ))}
       </div>
-
+      {hasMore && (
+        <button
+          onClick={handleLoadMore}
+          disabled={loadingMore}
+          className="w-full mt-3 text-sm text-blue-600 hover:underline disabled:text-gray-400"
+        >
+          {loadingMore ? "Loading..." : "Load more"}
+        </button>
+      )}
       {showLogoutConfirm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-6 w-80 shadow-lg">

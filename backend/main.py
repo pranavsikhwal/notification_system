@@ -68,14 +68,22 @@ async def create_notification(payload: NotificationCreate,current_user: User = D
     return new_notification
   
 #sending a list of all the notifications of a particular user 
+from typing import Optional
+
 @app.get("/notifications", response_model=list[NotificationOut])
-def get_notifications(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    notifications = db.query(Notification)\
-        .filter(Notification.user_id == current_user.id)\
-        .order_by(Notification.created_at.desc())\
-        .all()
+def get_notifications(
+    before_id: Optional[int] = None,
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    query = db.query(Notification).filter(Notification.user_id == current_user.id)
+
+    if before_id is not None:
+        query = query.filter(Notification.id < before_id)
+
+    notifications = query.order_by(Notification.id.desc()).limit(limit).all()
     return notifications
-  
 #PATCH is used when you want to update only part of an existing resource. Here, we're only changing one field (is_read), not replacing the entire notification 
 @app.patch("/notifications/{notification_id}/read", response_model=NotificationOut)
 def mark_as_read(
@@ -136,3 +144,15 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
     access_token = create_access_token(data={"sub": str(user.id)})
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+#to count the unread notifications 
+@app.get("/notifications/unread-count")
+def get_unread_count(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    count = db.query(Notification)\
+        .filter(Notification.user_id == current_user.id, Notification.is_read == False)\
+        .count()
+    return {"unread_count": count}
