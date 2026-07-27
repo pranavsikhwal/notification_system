@@ -2,7 +2,7 @@ import json
 import asyncio
 from redis_client import redis_client
 from connection_manager import manager, CHANNEL_NAME
-
+import os
 async def redis_listener():   #creating a function that keeps listening forever 
    print("DEBUG - REDIS_URL seen by app:", os.getenv("REDIS_URL")) 
    while True:
