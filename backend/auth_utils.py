@@ -1,10 +1,14 @@
 from passlib.context import CryptContext
 from jose import jwt
 from datetime import datetime, timedelta
+import os
+from dotenv import load_dotenv
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")  #cryptcontext is like a password manager who knows how to dp hashing and which algo to use
+load_dotenv()
 
-SECRET_KEY = "5b9f7e2c1d4a8f63e9b0c7a15d3f8e24a6c9b1d5e7f2a8c3d6e9f0b4a7c1d8e"
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day
 
